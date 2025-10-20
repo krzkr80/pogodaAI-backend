@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backend PogodaAI - Wyjaśnienie z perspektywy informatyki</title>
+    <style>
+        body { font-family: sans-serif; line-height: 1.6; color: #333; max-width: 960px; margin: 20px auto; padding: 0 20px; }
+        h1, h2, h3 { color: #2c3e50; }
+        h1 { text-align: center; border-bottom: 2px solid #3498db; padding-bottom: 10px; }
+        h2 { border-bottom: 1px solid #ccc; padding-bottom: 5px; margin-top: 40px; }
+        code { background-color: #f4f4f4; padding: 2px 6px; border-radius: 4px; font-family: 'Courier New', Courier, monospace; }
+        pre { background-color: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; border-left: 5px solid #3498db; }
+        .container { background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+        .step { margin-bottom: 30px; }
+        .filename { font-style: italic; color: #7f8c8d; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Jak działa backend PogodaAI: Perspektywa informatyczna</h1>
+
+        <div class="step">
+            <h2>1. Wprowadzenie: Cel</h2>
+            <p>
+                Głównym celem tego systemu backendowego jest przewidywanie przyszłych warunków pogodowych na podstawie danych historycznych. Osiąga to poprzez wdrożenie kompletnego potoku uczenia maszynowego, który obejmuje kilka kluczowych etapów:
+            </p>
+            <ul>
+                <li><strong>Pozyskiwanie i przetwarzanie danych:</strong> Zbieranie surowych danych i ich czyszczenie, aby nadawały się do modelu uczenia maszynowego.</li>
+                <li><strong>Trenowanie modelu:</strong> Używanie oczyszczonych danych do „nauczenia” sieci neuronowej rozpoznawania wzorców pogodowych.</li>
+                <li><strong>Serwowanie API:</strong> Udostępnianie wytrenowanego modelu za pośrednictwem internetowego interfejsu API, co pozwala innym aplikacjom (takim jak interfejs użytkownika) na wysyłanie zapytań i otrzymywanie prognoz.</li>
+            </ul>
+            <p>
+                Ten dokument szczegółowo opisuje każdy z tych etapów, wyjaśniając zastosowane algorytmy i struktury danych.
+            </p>
+        </div>
+
+        <div class="step">
+            <h2>2. Potok przetwarzania danych</h2>
+            <p>
+                Zanim maszyna będzie mogła się uczyć, dane muszą mieć spójny i czysty format. Jest to często najważniejsza część projektu uczenia maszynowego.
+            </p>
+
+            <h3>2.1. Ładowanie surowych danych</h3>
+            <p class="filename">Plik: <code>loader.py</code></p>
+            <p>
+                Proces rozpoczyna się od surowych danych przechowywanych w wielu plikach Excel (<code>.xlsx</code>). Każdy plik zawiera pomiary z określonej stacji pogodowej w danym okresie. Funkcja <code>run_loader</code> zarządza pierwszym krokiem: odnalezieniem i skonsolidowaniem tych danych.
+            </p>
+            <p>
+                Używa słownika (mapy haszującej) do grupowania plików według identyfikatora stacji, który jest wyodrębniany z nazwy pliku za pomocą wyrażeń regularnych. Jest to wydajny sposób na organizację plików przed ich przetworzeniem. Dane ze wszystkich plików dla jednej stacji są następnie łączone w jedną tabelę (DataFrame z biblioteki pandas) i zapisywane w nowym pliku Excel, gdzie dane każdej stacji znajdują się w osobnym arkuszu.
+            </p>
+            <pre><code class="language-python">
+# z loader.py
+
+def find_station_files(directory: str) -> Dict[str, List[str]]:
+    """
+    Wyszukuje i grupuje pliki Excel według ID stacji na podstawie ich nazw.
+    """
+    station_files = {}
+    for filename in os.listdir(directory):
+        if filename.endswith('.xlsx'):
+            match = re.search(r'_(\d+)\.xlsx$', filename)
+            if match:
+                station_id = match.group(1)
+                if station_id not in station_files:
+                    station_files[station_id] = []
+                station_files[station_id].append(os.path.join(directory, filename))
+    return station_files
+
+def run_loader(data_directory: str = 'data/', output_file: str = 'raw_combined_station_data.xlsx'):
+    """
+    Funkcja uruchamiająca potok ładowania i przetwarzania danych.
+    """
+    station_files = find_station_files(data_directory)
+    
+    with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
+        for station_id, files in station_files.items():
+            df = load_station_data(files)
+            if not df.empty:
+                df.to_excel(writer, sheet_name=f'station_{station_id}', index=False)
+            </code></pre>
+
+            <h3>2.2. Czyszczenie i normalizacja danych</h3>
+            <p class="filename">Plik: <code>fix_gaps.py</code></p>
+            <p>
+                Dane ze świata rzeczywistego są nieuporządkowane. Czujniki mogą ulec awarii, co prowadzi do przerw w osi czasu. Funkcja <code>fix_gaps</code> rozwiązuje ten problem. Traktuje dane szeregów czasowych jako sekwencję i stosuje algorytmy do obsługi brakujących wartości.
+            </p>
+            <ul>
+                <li><strong>Małe luki (1 godzina):</strong> Jeśli brakuje tylko jednej godziny, stosowana jest <strong>interpolacja liniowa</strong>. Algorytm ten szacuje brakującą wartość, obliczając punkt środkowy między wartością przed i po luce. Jest to prosty, ale skuteczny sposób na wygładzenie drobnych przerw w danych.</li>
+                <li><strong>Duże luki (>1 godzina):</strong> Interpolowanie dużych luk oznaczałoby tworzenie zbyt wielu danych, co mogłoby zakłócić wzorce, których model próbuje się nauczyć. System przyjmuje bardziej konserwatywne podejście: identyfikuje cały 24-godzinny blok zawierający dużą lukę i całkowicie go usuwa. Zapewnia to, że model trenuje się tylko na ciągłych, wiarygodnych sekwencjach danych.</li>
+            </ul>
+            <pre><code class="language-python">
+# z fix_gaps.py
+
+def fix_gaps(input_file: str, output_file: str, start_hour: int):
+    # ... (kod przygotowawczy) ...
+
+    # Krok 4: Interpolacja 1-godzinnych luk
+    # ...
+    interpolated_df = df.interpolate(method='linear', limit=1, limit_direction='both')
+    # ...
+
+    # Krok 5: Identyfikacja luk dłuższych niż 1 godzina i usuwanie 24-godzinnych bloków
+    # ...
+    nan_timestamps = df[df.isnull().any(axis=1)].index
+    # ...
+    blocks_to_remove = nan_timestamps.map(lambda ts: get_block_start(ts, start_hour)).unique()
+    mask = ~df.index.map(lambda ts: get_block_start(ts, start_hour)).isin(blocks_to_remove)
+    cleaned_df = df[mask]
+    # ...
+            </code></pre>
+        </div>
+
+        <div class="step">
+            <h2>3. Model uczenia maszynowego</h2>
+            
+            <h3>3.1. Przygotowanie danych dla szeregów czasowych</h3>
+            <p class="filename">Plik: <code>model_utils.py</code></p>
+            <p>
+                Sieć neuronowa potrzebuje danych w bardzo specyficznym formacie: tensorów numerycznych. Funkcja <code>build_tensors</code> jest odpowiedzialna za tę transformację.
+            </p>
+            <ol>
+                <li><strong>Skalowanie:</strong> Najpierw stosuje <code>StandardScaler</code>, popularną technikę normalizacji danych. Algorytm ten przeskalowuje wszystkie punkty danych tak, aby miały średnią równą 0 i odchylenie standardowe równe 1. Jest to kluczowe, ponieważ sieci neuronowe trenują się znacznie skuteczniej, gdy cechy wejściowe mają podobną skalę.</li>
+                <li><strong>Tworzenie okien:</strong> Następnie przesuwa 24-godzinne „okno” po danych. Dla każdego okna tworzy parę wejście-wyjście: pierwsze 23 godziny danych stają się wejściem (<code>X</code>), a 24. godzina staje się etykietą docelową, której model musi się nauczyć przewidywać (<code>y</code>). W ten sposób dane są strukturyzowane pod kątem problemu uczenia nadzorowanego.</li>
+            </ol>
+            <pre><code class="language-python">
+# z model_utils.py
+
+def build_tensors(df: pd.DataFrame):
+    """Tworzy kroczące 24-godzinne okna do predykcji szeregów czasowych."""
+    scaler = StandardScaler()
+    df_scaled = pd.DataFrame(scaler.fit_transform(df), index=df.index, columns=df.columns)
+
+    X, y, timestamps = [], [], []
+    
+    for i in range(0, len(df_scaled) - 24, 24):
+        window = df_scaled.iloc[i:i+24]
+        
+        time_diff = window.index[-1] - window.index[0]
+        if time_diff == pd.Timedelta(hours=23):
+            X.append(window.iloc[:23].values)  # Wejście: pierwsze 23 godziny
+            y.append(window.iloc[23].values)   # Wyjście: 24. godzina
+            # ...
+
+    return np.stack(X), np.stack(y), scaler, timestamps
+            </code></pre>
+
+            <h3>3.2. Architektura modelu: Długa pamięć krótkotrwała (LSTM)</h3>
+            <p class="filename">Plik: <code>model_utils.py</code></p>
+            <p>
+                Sercem systemu predykcyjnego jest sieć <strong>długiej pamięci krótkotrwałej (LSTM)</strong>. Jest to rodzaj rekurencyjnej sieci neuronowej (RNN) specjalnie zaprojektowanej do obsługi danych sekwencyjnych, takich jak szeregi czasowe.
+            </p>
+            <p>
+                W przeciwieństwie do standardowych sieci neuronowych, LSTM posiadają wewnętrzne „komórki pamięci” i „bramki” (wejściowa, wyjściowa i zapominania). Ta architektura pozwala sieci na utrzymywanie stanu w czasie, co umożliwia zapamiętywanie ważnych informacji z wcześniejszych etapów sekwencji (np. trendu temperatury sprzed 12 godzin) i zapominanie nieistotnych danych. Dzięki temu jest potężna w wychwytywaniu zależności czasowych występujących w danych pogodowych.
+            </p>
+            <pre><code class="language-python">
+# z model_utils.py
+
+class GenericLSTM(nn.Module):
+    def __init__(self, n_stations: int, hidden_size: int = 64, num_layers: int = 2, dropout: float = 0.2):
+        super().__init__()
+        self.lstm = nn.LSTM(
+            input_size=n_stations,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            batch_first=True,
+            dropout=dropout
+        )
+        self.fc = nn.Linear(hidden_size, n_stations)
+
+    def forward(self, x):
+        _, (h, _) = self.lstm(x)
+        out = self.fc(h[-1])
+        return out
+            </code></pre>
+
+            <h3>3.3. Trenowanie modelu</h3>
+            <p class="filename">Plik: <code>train.py</code></p>
+            <p>
+                Trenowanie to proces uczenia LSTM dokonywania dokładnych prognoz. Jest to iteracyjny problem optymalizacyjny.
+            </p>
+            <ol>
+                <li>Model przetwarza partię sekwencji wejściowych (<code>X_train</code>) i dokonuje prognoz.</li>
+                <li><strong>Funkcja straty</strong> (błąd średniokwadratowy - MSE) oblicza, jak bardzo prognozy odbiegają od rzeczywistych wartości (<code>y_train</code>).</li>
+                <li><strong>Optymalizator</strong> (Adam) następnie wykorzystuje wartość straty do nieznacznej modyfikacji wewnętrznych wag sieci LSTM w kierunku, który zmniejszy błąd. Ten proces, znany jako wsteczna propagacja, jest powtarzany przez wiele epok, aż prognozy modelu będą jak najdokładniejsze.</li>
+            </ol>
+            <p>
+                Na koniec stan wytrenowanego modelu (jego nauczone wagi) oraz skaler są zapisywane do pliku (<code>.pt</code>) do późniejszego wykorzystania.
+            </p>
+        </div>
+
+        <div class="step">
+            <h2>4. Serwowanie modelu za pomocą API</h2>
+            <p class="filename">Plik: <code>api_app.py</code></p>
+            <p>
+                Wytrenowany model jest użyteczny tylko wtedy, gdy można z niego korzystać. Serwer API, zbudowany przy użyciu <strong>FastAPI</strong>, udostępnia funkcjonalność systemu przez protokół HTTP.
+            </p>
+            <p>
+                API posiada kilka punktów końcowych (endpointów), które uruchamiają omówione wcześniej funkcje:
+            </p>
+            <ul>
+                <li><code>POST /load_and_filter/</code>: Uruchamia cały potok przetwarzania danych (<code>loader.py</code>, a następnie <code>fix_gaps.py</code>).</li>
+                <li><code>POST /run_script/</code>: Elastyczny punkt końcowy do uruchamiania określonych skryptów, takich jak <code>train</code> lub <code>evaluate</code>, z niestandardowymi parametrami.</li>
+                <li><code>POST /use/</code>: Punkt końcowy do predykcji. Tutaj wytrenowany model jest wykorzystywany w praktyce.</li>
+            </ul>
+            <p>
+                Gdy żądanie trafia do punktu końcowego <code>/use/</code> z nowymi danymi z 23 godzin, serwer ładuje zapisany model i skaler, stosuje tę samą transformację skalującą do nowych danych, przekazuje je do modelu i zwraca prognozę modelu w formacie JSON.
+            </p>
+            <pre><code class="language-python">
+# z api_app.py
+
+@app.post("/use/")
+async def use_model(request: UseModelRequest):
+    """
+    Odbiera dane wejściowe modelu i zwraca predykcję przy użyciu określonego modelu.
+    """
+    # ... (ładowanie modelu i sprawdzanie danych) ...
+
+    # Przygotowanie danych wejściowych dla predict_one_day
+    # ...
+
+    try:
+        predictions = await run_in_threadpool(
+            predict_one_day,
+            model_path=model_path,
+            input_data_json=input_data_json_str
+        )
+        
+        # Obliczanie średniej z predykcji
+        total_prediction = sum(predictions.values())
+        average_prediction = total_prediction / len(predictions)
+
+        return {
+            "message": f"Model '{request.model_name}' użyty pomyślnie",
+            "average_prediction": average_prediction,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Predykcja nie powiodła się: {e}")
+            </code></pre>
+        </div>
+
+        <div class="step">
+            <h2>5. Podsumowanie</h2>
+            <p>
+                Backend PogodaAI to dobrze zorganizowany system, który demonstruje klasyczny przepływ pracy w uczeniu maszynowym. Przekształca surowe, rozproszone dane w czysty, znormalizowany format; wykorzystuje zaawansowaną architekturę sieci neuronowej (LSTM) do nauki wzorców czasowych; i udostępnia te możliwości predykcyjne za pośrednictwem nowoczesnego, asynchronicznego interfejsu API. Każdy skrypt ma odrębną odpowiedzialność, co czyni system modułowym i łatwym w utrzymaniu.
+            </p>
+        </div>
+    </div>
+</body>
+</html>
