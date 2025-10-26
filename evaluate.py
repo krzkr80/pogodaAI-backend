@@ -33,6 +33,9 @@ def evaluate_and_plot(
     model_type = checkpoint.get('model_type', 'unknown')
     variable_suffix = checkpoint.get('variable_suffix', 'TEMPERATURA_ŚRD')
     n_stations = len(checkpoint["columns"])
+    num_layers = checkpoint.get('num_layers', 2) # Get num_layers from checkpoint, default to 2
+    hidden_size = checkpoint.get('hidden_size', 64) # Get hidden_size from checkpoint, default to 64
+    dropout = checkpoint.get('dropout', 0.2) # Get dropout from checkpoint, default to 0.2
     split_idx = checkpoint.get('split_idx', None)
     X_shape = checkpoint.get('X_shape', None)
     y_shape = checkpoint.get('y_shape', None)
@@ -49,7 +52,7 @@ def evaluate_and_plot(
     X_test, y_test = X[split_idx:], y[split_idx:]
     test_timestamps = all_timestamps[split_idx:]
 
-    model = GenericLSTM(n_stations=n_stations)
+    model = GenericLSTM(n_stations=n_stations, hidden_size=hidden_size, num_layers=num_layers, dropout=dropout)
     model.load_state_dict(checkpoint["model_state_dict"])
     model.eval()
 
